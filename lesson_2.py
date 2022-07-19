@@ -1,7 +1,15 @@
 from itertools import count
 import requests
 from bs4 import BeautifulSoup
+import pymongo
+from pymongo import MongoClient
+from pymongo import errors
 from pprint import pprint
+import json
+
+client = MongoClient('127.0.0.1', 27017)
+db = client['hh_user']
+col_vacancies = db.vacancies
 
 page = 0
 headers = {'User-Agent':
@@ -24,12 +32,11 @@ def get_salary(salary_field):
     return salary
 
 
-vacancies_data = []
 count = 1
 while True:
     url = 'https://hh.ru/search/vacancy'
     params = {'page': page, 'search_field': [
-        'name', 'company_name', 'description'], 'text': 'Python'}
+        'name', 'company_name', 'description'], 'text': 'Python', 'items_on_page': 20}
 
     session = requests.Session()
     response = session.get(url=url, headers=headers, params=params)
@@ -42,18 +49,37 @@ while True:
         break
 
     pprint(f"загрузка страницы -- {count}")
-    vacancies_data = []
     for vacancy in vacancies:
         vacancies_dict = {}
         title_href = vacancy.find('a', class_='bloko-link')
         vacancies_dict['name'] = title_href.text
         vacancies_dict['site'] = mane_url
         vacancies_dict['link_vacancy'] = title_href.get('href')
-        vacancies_dict['salary'] = get_salary(vacancy.find(
+        get_salaries = get_salary(vacancy.find(
             'span', {'data-qa': 'vacancy-serp__vacancy-compensation'}))
-        vacancies_data.append(vacancies_dict)
+        vacancies_dict['min'] = get_salaries['min']
+        vacancies_dict['max'] = get_salaries['max']
+        vacancies_dict['currency'] = get_salaries['currency']
+        # ----------------------------------------------------------------------------------------
+        col_vacancies.update_one({'link_vacancy': vacancies_dict['link_vacancy']}, {
+            '$set': vacancies_dict}, upsert=True)
+        # ----------------------------------------------------------------------------------------
     count += 1
     page += 1
 
 
-pprint(vacancies_data)
+def find_vacancies_for_salary(inp_salary: int, inp_currency: str):
+
+    result = col_vacancies.find({
+        '$and': [
+            {'$or': [{'min': {'$gt': inp_salary}},
+                     {'max': {'$gt': inp_salary}}]},
+            # {'currency': 'руб'}
+        ]
+    })
+
+    return list(result)
+
+
+print(find_vacancies_for_salary(100000, 'руб'))
+# db.vacancies.drop()
